@@ -1,8 +1,8 @@
 # Starward BGM Detector
 
-Windows用のデスクトップツールです。選択したゲームウィンドウを監視し、戦闘開始・覚醒・リザルトなどの画面状態を検出して、設定したBGMを再生します。
+Windows用のデスクトップツールです。選択したゲームウィンドウを監視し、戦闘開始・覚醒・リザルトなどの画面状態を検出します。現在のリリースでは、戦闘開始時に設定したBGMを再生します。
 
-This Windows desktop tool monitors a selected game window, detects events such as battle start, awakening, and results, and plays your configured BGM.
+This Windows desktop tool monitors a selected game window and detects events such as battle start, awakening, and results. In the current release, it plays your configured BGM at battle start.
 
 ゲーム画像、テンプレートPNG、音楽ファイルは同梱していません。利用者自身が用意してください。
 
@@ -25,6 +25,10 @@ Windowsで使用できます。配布されたポータブル版は展開後、`
 - **True Random**: 候補から完全にランダムに曲を選びます。
 
 グループと曲の所属は `bgm_library.json` で管理されます。GUIから全BGMまたは選択グループを指定でき、音量とリザルト時のフェードアウト時間も調整できます。監視中の再生設定変更は現在の曲を止めず、次の `BATTLE_START` から反映されます。
+
+### 今後の予定
+
+覚醒状態の検出は内部的に行われますが、現在のリリースでは覚醒専用BGMへの切り替えは利用できません。覚醒BGMの切り替えは今後の機能です。
 
 ### テンプレートPNG
 
@@ -68,6 +72,10 @@ Put your own `.mp3`, `.ogg`, or `.wav` files in the portable `BGM/` folder.
 - **True Random** selects uniformly at random from the available tracks.
 
 Groups and membership are stored in `bgm_library.json`. Use the GUI to select all BGM or one group, and to adjust volume and result fade-out time. Playback-setting changes while monitoring take effect at the next `BATTLE_START` without interrupting the current track.
+
+### Planned / Future
+
+Awakening state detection exists internally, but awakening-specific music switching is not available in the current release. Awakening BGM switching is planned for a future release.
 
 ### Template PNG files
 
