@@ -1,0 +1,27 @@
+# Build and PyInstaller artifacts
+build/
+dist/
+*.spec
+*.toc
+*.manifest
+
+# Python environments and generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local testing and diagnostic output
+samples/
+debug*.png
+*.log
+
+# User-provided game templates (keep the instructions)
+templates/**/*.png
+templates_old/
+!templates/README.txt
+
+# Local BGM files (keep the instructions)
+BGM/*
+!BGM/README.txt

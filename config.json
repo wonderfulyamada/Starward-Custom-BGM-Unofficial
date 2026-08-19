@@ -1,0 +1,139 @@
+{
+  "reference_width": 1280,
+  "reference_height": 720,
+  "scan_hz": 20,
+  "go_roi": [
+    420,
+    180,
+    860,
+    500
+  ],
+  "battle_start_roi": [
+    180,
+    70,
+    1100,
+    660
+  ],
+  "victory_roi": [
+    250,
+    100,
+    1030,
+    680
+  ],
+  "defeat_roi": [
+    250,
+    100,
+    1030,
+    680
+  ],
+  "result_ui_roi": [
+    390,
+    100,
+    880,
+    600
+  ],
+  "result_template_scales": [
+    0.7,
+    0.75,
+    0.8
+  ],
+  "result_template_score_min": 0.85,
+  "result_scale_min": 0.7,
+  "result_scale_max": 0.8,
+  "result_position": [
+    435,
+    142
+  ],
+  "result_position_tolerance_x": 35,
+  "result_position_tolerance_y": 30,
+  "match_confirmed_2v2_roi": [
+    0,
+    0,
+    1280,
+    720
+  ],
+  "template_scales": [
+    0.55,
+    0.6,
+    0.65,
+    0.7,
+    0.75,
+    0.8,
+    0.85
+  ],
+  "template_alpha_threshold": 16,
+  "result_color_saturation_min": 70,
+  "result_color_min_pixels": 500,
+  "victory_hue_ranges": [
+    [
+      5,
+      35
+    ]
+  ],
+  "victory_color_ratio_min": 0.45,
+  "defeat_hue_ranges": [
+    [
+      85,
+      135
+    ]
+  ],
+  "defeat_color_ratio_min": 0.75,
+  "result_confirm_frames": 3,
+  "result_roi": [
+    340,
+    300,
+    940,
+    530
+  ],
+  "burst_center": [
+    920,
+    610
+  ],
+  "burst_search_roi": [
+    800,
+    500,
+    1150,
+    710
+  ],
+  "burst_calibration_radius_min": 35,
+  "burst_calibration_radius_max": 56,
+  "burst_calibration_reference_radius": 41,
+  "burst_calibration_hough_threshold": 30,
+  "burst_calibration_confirm_frames": 8,
+  "burst_calibration_window_frames": 20,
+  "burst_calibration_center_tolerance": 6,
+  "burst_calibration_radius_tolerance": 5,
+  "burst_emblem_templates": [
+    "awakening_emblem_1.png",
+    "awakening_emblem_2.png"
+  ],
+  "burst_emblem_score_min": 0.8,
+  "burst_emblem_confirm_frames": 2,
+  "burst_emblem_absence_timeout_seconds": 1.35,
+  "burst_normal_tick_edge_min": 0.55,
+  "burst_normal_outer_edge_min": 0.8,
+  "burst_normal_center_tolerance": 7,
+  "burst_normal_confirm_frames": 4,
+  "burst_inner_radius": 28,
+  "burst_ring_inner_radius": 28,
+  "burst_ring_outer_radius": 52,
+  "burst_normal_ring_edge_min": 0.225,
+  "burst_active_inner_edge_min": 0.18,
+  "burst_active_ring_edge_max": 0.21,
+  "burst_confirm_frames": 4,
+  "burst_end_confirm_frames": 4,
+  "go_threshold": 0.42,
+  "victory_threshold": 0.38,
+  "defeat_threshold": 0.38,
+  "bgm_root": "BGM",
+  "ui_language": "ja",
+  "bgm_playback_mode": "Fixed",
+  "bgm_playback_scope": "All BGM",
+  "bgm_selected_group": "",
+  "bgm_fixed_track": "",
+  "battle_bgm_volume": 0.14953271028037382,
+  "result_fadeout_ms": 1000,
+  "awakening_bgm": "",
+  "victory_bgm": "",
+  "defeat_bgm": ""
+}

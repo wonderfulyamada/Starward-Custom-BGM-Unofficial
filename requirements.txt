@@ -1,0 +1,5 @@
+opencv-python
+numpy
+mss
+# Optional for audio:
+pygame-ce
