@@ -23,17 +23,16 @@ Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $distDir -Recurse -Force -ErrorAction SilentlyContinue
 & $Python -m pip install -r (Join-Path $projectRoot "requirements.txt") pyinstaller
 & $Python -m PyInstaller --noconfirm --clean --onedir --windowed --name StarwardBGM `
-    --paths $projectRoot --collect-all pygame --collect-all mss `
+    --paths $projectRoot --collect-all mss `
     --workpath $buildDir --distpath $distDir (Join-Path $projectRoot "launcher.py")
 
 Copy-Item (Join-Path $projectRoot "config.json") (Join-Path $appDir "config.json") -Force
-New-Item -ItemType Directory -Path (Join-Path $appDir "BGM") -Force | Out-Null
-Copy-Item (Join-Path $projectRoot "BGM\README.txt") (Join-Path $appDir "BGM\README.txt") -Force
+New-Item -ItemType Directory -Path (Join-Path $appDir "BGM\Default") -Force | Out-Null
 @'
 {
   "version": 2,
   "groups": {
-    "デフォルト": []
+    "Default": []
   }
 }
 '@ | Set-Content -LiteralPath (Join-Path $appDir "bgm_library.json") -Encoding utf8

@@ -1,12 +1,7 @@
 {
   "version": 2,
   "groups": {
-    "デフォルト": [
-      "バンバード - mozell - mozell.mp3",
-      "Non Non Biyori RemixETIA  NyanpasuNIZIGEN COMP.wav",
-      "[maimai pv] oboro.wav",
-      "sakura sunrise.wav",
-      "【VIVID HARDCORE】Sanaas - Quickdraw.wav"
-    ]
-  }
+    "Default": []
+  },
+  "awakening_offsets": {}
 }

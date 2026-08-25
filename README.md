@@ -1,103 +1,75 @@
-# Starward BGM Detector
+# Starward Custom BGM（非公式 / Unofficial）
 
-Windows用のデスクトップツールです。選択したゲームウィンドウを監視し、戦闘開始・覚醒・リザルトなどの画面状態を検出します。現在のリリースでは、戦闘開始時に設定したBGMを再生します。
+『星の翼 / Starward』の選択したウィンドウをキャプチャし、画面認識と任意のゲームログ監視から状態を検出して、ユーザーが用意したBGMを再生するWindows向けツールです。ゲーム画像、テンプレートPNG、音楽ファイルは同梱していません。
 
-This Windows desktop tool monitors a selected game window and detects events such as battle start, awakening, and results. In the current release, it plays your configured BGM at battle start.
-
-ゲーム画像、テンプレートPNG、音楽ファイルは同梱していません。利用者自身が用意してください。
-
-No game images, template PNGs, or music files are bundled. You must provide your own.
+This unofficial Windows tool captures a selected Starward window and plays user-provided BGM using screen recognition and optional game-log monitoring. Game images, template PNGs, and music are not bundled.
 
 ## 日本語
 
-### 対応環境とポータブル版
+### 機能
 
-Windowsで使用できます。配布されたポータブル版は展開後、`StarwardBGM.exe` を起動してください。インストールは不要です。
+- ウィンドウ選択／画面キャプチャ。バトルBGMは画面上の **GO** 検出だけで開始します。
+- バトルBGM: 固定、均等ランダム、完全ランダム。音量調整に対応します。
+- ロビーBGM（任意）: `StateLobby` で開始してループ再生。選択グループ内の固定／均等ランダム／完全ランダムに対応し、常に `0.0` 秒から開始します。
+- マッチ成立BGM（任意）: `UpdateMatchDataInGamePush State:Confirmed` だけで開始してループ再生。`Matching` / `Confirming` では開始しません。`FightingState: True` / `Battle-9` は音声を変更しないヒントです。ロード中も継続し、画面GOでバトルBGMへ移ります。選択グループ内の3モードに対応し、常に `0.0` 秒から開始します。
+- 覚醒BGM（任意）: 固定曲のみ。曲ごとの開始位置を使用し、終了後は保存した位置からバトルBGMへ復帰します。
+- 勝利／敗北BGM（任意）: 固定曲のみ。曲ごとの開始位置からワンショット再生します。
+- 疑似フェード: 現在曲をフェードアウトし、次の曲を遅延開始します（同時2ストリーム再生ではありません）。
+- `Ctrl+F8` 一時停止／再開、日本語／英語UI、ポータブル実行形式。
 
-起動後、`更新` を押して表示中のゲームウィンドウを一覧に出し、対象ウィンドウを選択して `開始` を押します。監視状態は「停止中」「監視中」「一時停止」として表示され、検出状態（`IDLE` / `BATTLE` / `AWAKENING` / `RESULT`）とは別に表示されます。`Ctrl+F8` で一時停止・再開できます。
+### BGMグループとメタデータ
 
-### BGMの設定
+`BGM/Default/` のような `BGM/` 直下のグループへ `.mp3`、`.ogg`、`.wav` を配置します。ロビー／マッチのランダム選曲は必ず選択グループ内です。中央の `bgm_library.json` が所属、履歴、曲ごとの開始位置を管理します。ロビー／マッチは保存済み開始位置を使わず、覚醒／勝利／敗北は固定曲の保存済み開始位置を使います。
 
-自分で用意した `.mp3`、`.ogg`、または `.wav` ファイルを、ポータブル版の `BGM/` フォルダーに置いてください。
+### ゲームログ監視
 
-- **Fixed**: 指定した1曲を戦闘開始時に再生します。
-- **Balanced Random**: 再生履歴を考慮して曲を選びます。
-- **True Random**: 候補から完全にランダムに曲を選びます。
+ログ監視は任意かつ手動設定です。GUIで有効化し、Starward Logsフォルダーを指定します。自動検索はしません。ロビー／マッチ機能にのみ必要で、無効またはパス不正でもGOを含む画面認識機能は通常どおり動作します。最新の `Log_*.txt` に末尾から接続し、新しい追記行だけを処理します。
 
-グループと曲の所属は `bgm_library.json` で管理されます。GUIから全BGMまたは選択グループを指定でき、音量とリザルト時のフェードアウト時間も調整できます。監視中の再生設定変更は現在の曲を止めず、次の `BATTLE_START` から反映されます。
+### テンプレート・実行・ビルド
 
-### 今後の予定
-
-覚醒状態の検出は内部的に行われますが、現在のリリースでは覚醒専用BGMへの切り替えは利用できません。覚醒BGMの切り替えは今後の機能です。
-
-### テンプレートPNG
-
-検出を開始するには、利用者自身のゲーム画面から作成した次のPNGを `templates/` に配置してください。
-
-- `battle_start.png`
-- `victory.png`
-- `defeat.png`
-
-テンプレートはゲームアセットとして同梱されません。詳しくは `templates/README.txt` を参照してください。
-
-### ソースから実行・ビルド
-
-Python 3.13以降を用意してから、依存関係をインストールしてGUIを起動します。
+利用者自身の画面から `battle_start.png`、`victory.png`、`defeat.png` を作成し `templates/` に置いてください。詳細は `templates/README.txt` を参照してください。
 
 ```powershell
 py -m pip install -r requirements.txt
 py main.py --gui
-```
-
-ポータブル版を作るには、Tkが利用できるPythonを指定して次を実行します。
-
-```powershell
 .\build_portable.ps1
 ```
+
+### 公開配布について
+
+公式サポートから、ゲームファイルを変更せず、利用・配布が非商用であるという説明済みの方式であれば公開配布可能との回答を受けています。この条件下で、画面キャプチャ／画像認識と、ゲーム状態検出のための `Log_*.txt` リアルタイム監視の両方が確認対象です。
+
+これは公式推奨、提携、認証、または無関係な将来実装への包括的許可ではありません。本プロジェクトは非公式・独立のツールです。
 
 ## English
 
-### Platform and portable release
+### Features
 
-The tool supports Windows. For a portable release, extract it and run `StarwardBGM.exe`; no installation is required.
+- Select a visible window for capture. Battle BGM starts **only** on screen GO detection.
+- Battle BGM supports Fixed, Balanced Random, and True Random, plus volume control.
+- Optional Lobby BGM starts on `StateLobby`, loops, supports all three modes within its selected group, and always starts at `0.0`.
+- Optional Match Confirmed BGM starts only on `UpdateMatchDataInGamePush State:Confirmed` and loops. `Matching` / `Confirming` do not start it; `FightingState: True` / `Battle-9` are non-audio hints. It continues through loading until screen GO transitions to Battle BGM. Its three modes stay within the selected group and start at `0.0`.
+- Optional Awakening BGM is fixed-track only, uses a per-track offset, and resumes the saved Battle BGM afterward.
+- Optional Victory/Defeat BGM are fixed-track, one-shot cues using per-track offsets.
+- Pseudo fades use fadeout plus a delayed handoff, without dual-stream mixing.
+- `Ctrl+F8` pause/resume, JA/EN UI, and portable builds.
 
-Click **Refresh**, choose a visible game window, then click **Start**. Monitoring status—**Stopped**, **Running**, or **Paused**—is shown separately from the detection state: `IDLE`, `BATTLE`, `AWAKENING`, or `RESULT`. Press `Ctrl+F8` to pause or resume monitoring.
+### Groups, metadata, and logs
 
-### BGM setup
+Place `.mp3`, `.ogg`, or `.wav` files in direct groups such as `BGM/Default/`. Lobby/Match random modes never leave their selected group. Central `bgm_library.json` stores membership, history, and per-track offsets. Lobby/Match ignore stored offsets; Awakening/Victory/Defeat use them.
 
-Put your own `.mp3`, `.ogg`, or `.wav` files in the portable `BGM/` folder.
+Game-log monitoring is optional and manually configured in the GUI; no path is guessed. It is required only for Lobby/Match. A disabled monitor or invalid path does not disable screen-based features. The newest `Log_*.txt` is attached at EOF and only appended lines are processed.
 
-- **Fixed** plays the selected track at battle start.
-- **Balanced Random** selects tracks using playback history.
-- **True Random** selects uniformly at random from the available tracks.
-
-Groups and membership are stored in `bgm_library.json`. Use the GUI to select all BGM or one group, and to adjust volume and result fade-out time. Playback-setting changes while monitoring take effect at the next `BATTLE_START` without interrupting the current track.
-
-### Planned / Future
-
-Awakening state detection exists internally, but awakening-specific music switching is not available in the current release. Awakening BGM switching is planned for a future release.
-
-### Template PNG files
-
-Before detection can start, provide your own game-screen PNG files in `templates/` with these names:
-
-- `battle_start.png`
-- `victory.png`
-- `defeat.png`
-
-These templates are not bundled as game assets. See `templates/README.txt` for details.
-
-### Run and build from source
-
-Install Python 3.13 or later and the dependencies, then launch the GUI:
+Create `battle_start.png`, `victory.png`, and `defeat.png` from your own game screen under `templates/`.
 
 ```powershell
 py -m pip install -r requirements.txt
 py main.py --gui
-```
-
-Build the portable release with a Tk-capable Python installation:
-
-```powershell
 .\build_portable.ps1
 ```
+
+### Public distribution and support confirmation
+
+Official support confirmed public distribution under the described approach provided game files are not modified and use/distribution is non-commercial. The confirmation covered screen capture/image recognition and real-time `Log_*.txt` monitoring for game-state detection.
+
+This is not an official endorsement, partnership, certification, or blanket permission for unrelated future implementations. The project remains unofficial and independent.

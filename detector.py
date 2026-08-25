@@ -26,6 +26,11 @@ class BurstMetrics:
     ring_edge: float
     emblem_score: float = 0.0
     normal_tick_edge: float = 0.0
+    gauge_level: float | None = None
+    glow_score: float | None = None
+    glow_classification: str = "UNKNOWN"
+    hud_observable: bool = False
+    cut_in_detected: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,7 @@ class TemplateBank:
 class ScreenDetector:
     def __init__(self, config, templates: TemplateBank):
         self.cfg = config
+        self.debug = bool(config.get("_debug", False))
         self.templates = templates
         template_dir = ROOT / "templates"
         self._awakening_emblems = []
@@ -98,6 +104,12 @@ class ScreenDetector:
         self._burst_samples: list[tuple[float, float, float]] = []
         self._burst_geometry: BurstGeometry | None = None
         self._burst_inner_ring_seen = False
+        self._debug_ready_episode = 0
+        self._debug_ready_active = False
+        self._debug_ready_missing_samples = 0
+        self._debug_ready_gauge_samples = 0
+        self._debug_ready_missing_limit = int(self.cfg.get("debug_ready_missing_samples", 2))
+        self._debug_ready_gauge_limit = int(self.cfg.get("debug_ready_gauge_samples", 10))
 
     @staticmethod
     def _load_gray_template(path):
@@ -115,6 +127,55 @@ class ScreenDetector:
         self._burst_samples.clear()
         self._burst_geometry = None
         self._burst_inner_ring_seen = False
+        self._debug_ready_episode = 0
+        self._debug_ready_active = False
+        self._debug_ready_missing_samples = 0
+        self._debug_ready_gauge_samples = 0
+
+    def _begin_debug_ready_episode(self, mode):
+        if not self.debug:
+            return
+        if mode == "ready" and not self._debug_ready_active:
+            self._debug_ready_episode += 1
+            self._debug_ready_missing_samples = 0
+            self._debug_ready_gauge_samples = 0
+            self._debug_ready_active = True
+            print(f"READY gauge episode={self._debug_ready_episode} begin")
+        elif mode != "ready":
+            self._debug_ready_active = False
+
+    def _debug_ready_gauge(self, image, roi, visible, gauge_level, lit_sectors, lit_pixels, reason="sample"):
+        if not self.debug:
+            return
+        valid = gauge_level is not None
+        if valid:
+            if self._debug_ready_gauge_samples >= self._debug_ready_gauge_limit:
+                return
+            self._debug_ready_gauge_samples += 1
+            sample = self._debug_ready_gauge_samples
+            limit = self._debug_ready_gauge_limit
+            kind = "gauge"
+        else:
+            if self._debug_ready_missing_samples >= self._debug_ready_missing_limit:
+                return
+            self._debug_ready_missing_samples += 1
+            sample = self._debug_ready_missing_samples
+            limit = self._debug_ready_missing_limit
+            kind = "missing"
+        x1, y1, x2, y2 = roi
+        print(
+            "READY gauge ROI "
+            f"episode={self._debug_ready_episode} kind={kind} sample={sample}/{limit} roi=({x1},{y1})-({x2},{y2}) "
+            f"hud_visible={visible} gauge={gauge_level if gauge_level is not None else 'n/a'} "
+            f"lit_sectors={lit_sectors}/72 lit_pixels={lit_pixels} "
+            f"raw=resize96,band=37:46,value_min={self.cfg['burst_gauge_value_min']} reason={reason}"
+        )
+        if image is not None:
+            output = ROOT / "debug_ready_gauge"
+            output.mkdir(exist_ok=True)
+            path = output / f"ready_{self._debug_ready_episode:02d}_{kind}_{sample:02d}.png"
+            cv2.imwrite(str(path), image)
+            print(f"READY gauge ROI saved={path}")
 
     def _burst_circle_candidates(self, frame):
         roi, (offset_x, offset_y) = self._scaled_roi(frame, self.cfg["burst_search_roi"])
@@ -321,8 +382,11 @@ class ScreenDetector:
             and abs(result.position[1] - expected_y) <= self.cfg["result_position_tolerance_y"] * sy
         )
         reference_scale = result.scale / self._frame_scale(frame)
+        scale_epsilon = 1e-9
         scale_match = (
-            self.cfg["result_scale_min"] <= reference_scale <= self.cfg["result_scale_max"]
+            self.cfg["result_scale_min"] - scale_epsilon
+            <= reference_scale
+            <= self.cfg["result_scale_max"] + scale_epsilon
         )
         candidate = (
             result.score >= self.cfg["result_template_score_min"]
@@ -331,6 +395,23 @@ class ScreenDetector:
             and position_match
             and color_match
         )
+        if getattr(self, "debug", False) and result.position is not None and result.score >= score_threshold:
+            reasons = []
+            if result.score < self.cfg["result_template_score_min"]:
+                reasons.append("template_score")
+            if not scale_match:
+                reasons.append("scale")
+            if not position_match:
+                reasons.append("anchor")
+            if not color_match:
+                reasons.append("color")
+            print(
+                "RESULT candidate "
+                f"type={color_name} score={result.score:.3f} "
+                f"raw_scale={result.scale:.6f} reference_scale={reference_scale:.6f} "
+                f"anchor={position_match} color={color_match} "
+                f"accept={candidate} reason={','.join(reasons) if reasons else 'accepted'}"
+            )
         return DetectionResult(
             result.score,
             result.position,
@@ -373,27 +454,60 @@ class ScreenDetector:
         return result.score if result.candidate else 0.0
 
     def burst_metrics(self, frame, calibrate=True, mode=None):
+        self._begin_debug_ready_episode(mode)
         if self._burst_geometry is None and calibrate:
             self._update_burst_calibration(frame)
         if self._burst_geometry is None:
+            if mode == "ready":
+                self._debug_ready_gauge(frame, (0, 0, 0, 0), False, None, 0, 0, "geometry_unavailable")
+                if self.debug:
+                    print("AWAKENING_START cutin detected=False score=n/a reason=geometry_unavailable")
+            elif self.debug and mode == "awakening":
+                print("AWAKENING_END icon_observable=False reason=geometry_unavailable")
             return BurstMetrics("unknown", 0.0, 0.0)
 
         cx, cy = self._burst_geometry.center
-        half = int(round(self._burst_geometry.radius * 1.08))
+        # Include the space immediately outside the HUD rim: this is where an
+        # active Awakening's colour-independent glow appears.
+        half = int(round(self._burst_geometry.radius * 1.25))
         if cy - half < 0 or cx - half < 0 or cy + half > frame.shape[0] or cx + half > frame.shape[1]:
+            if mode == "ready":
+                self._debug_ready_gauge(frame, (cx - half, cy - half, cx + half, cy + half), False, None, 0, 0, "roi_out_of_bounds")
+                if self.debug:
+                    print("AWAKENING_START cutin detected=False score=n/a reason=roi_out_of_bounds")
+            elif self.debug and mode == "awakening":
+                print("AWAKENING_END icon_observable=False reason=roi_out_of_bounds")
             return BurstMetrics("unknown", 0.0, 0.0)
 
-        hud = frame[cy - half:cy + half, cx - half:cx + half]
+        roi = (cx - half, cy - half, cx + half, cy + half)
+        hud = frame[roi[1]:roi[3], roi[0]:roi[2]]
         hud = cv2.resize(hud, (96, 96), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(hud, cv2.COLOR_BGR2GRAY)
-        emblem_roi = gray[19:77, 19:77]
+        # The cut-in emblem templates were authored against the tight HUD
+        # crop.  Keep that crop independent from the wider outer-glow crop.
+        icon_half = int(round(self._burst_geometry.radius * 1.08))
+        icon = frame[cy - icon_half:cy + icon_half, cx - icon_half:cx + icon_half]
+        icon = cv2.resize(icon, (96, 96), interpolation=cv2.INTER_AREA)
+        icon_gray = cv2.cvtColor(icon, cv2.COLOR_BGR2GRAY)
+        emblem_roi = icon_gray[19:77, 19:77]
         emblem_score = max(
             (float(cv2.matchTemplate(emblem_roi, template, cv2.TM_CCOEFF_NORMED).max())
              for template in self._awakening_emblems),
             default=0.0,
         )
-
+        cut_in_detected = (
+            mode != "awakening"
+            and emblem_score >= self.cfg["burst_emblem_score_min"]
+        )
+        if self.debug and mode == "ready":
+            print(
+                "AWAKENING_START cutin "
+                f"detected={cut_in_detected} score={emblem_score:.3f} "
+                f"threshold={self.cfg['burst_emblem_score_min']:.3f} "
+                f"geometry=center({cx},{cy}) radius={self._burst_geometry.radius:.1f}"
+            )
         edges = cv2.Canny(gray, 80, 160) > 0
+        hsv = cv2.cvtColor(hud, cv2.COLOR_BGR2HSV)
         yy, xx = np.indices((96, 96))
         radius = np.sqrt((xx - 47.5) ** 2 + (yy - 47.5) ** 2)
         sectors = 72
@@ -410,23 +524,85 @@ class ScreenDetector:
             ) / sectors)
 
         tick_edge = angular_edge_coverage(25, 35)
+        inner_icon_edge = angular_edge_coverage(8, 22)
         outer_edge = angular_edge_coverage(38, 48)
         circle_present = outer_edge >= self.cfg["burst_normal_outer_edge_min"]
-
-        if mode != "awakening" and emblem_score >= self.cfg["burst_emblem_score_min"]:
+        if cut_in_detected:
             cls = "active"
-        elif (
-            emblem_score < self.cfg["burst_emblem_score_min"]
-            and circle_present
-            and tick_edge >= self.cfg["burst_normal_tick_edge_min"]
-        ):
+        elif circle_present and tick_edge >= self.cfg["burst_normal_tick_edge_min"]:
             cls = "normal"
         else:
             cls = "unknown"
+
+        # The bright outer progress arc is proportional to the player's burst
+        # gauge.  Count lit angular sectors rather than pixels so effects over
+        # a small part of the HUD do not materially alter the measurement.
+        gauge_band = (radius >= 37) & (radius < 46)
+        lit = gauge_band & (hsv[:, :, 2] >= self.cfg["burst_gauge_value_min"])
+        lit_sectors = int(sum(np.any(lit & (angles == sector)) for sector in range(sectors)))
+        # The tick ring remains after the outer effect fades, but it alone can
+        # be mimicked by scene edges. Require stable central icon detail too;
+        # neither signal depends on outer-glow strength.
+        hud_observable = (
+            tick_edge >= self.cfg["burst_normal_tick_edge_min"]
+            and inner_icon_edge >= self.cfg["burst_hud_inner_icon_edge_min"]
+        )
+        # During an Awakening, partial HUD/background edges are not a valid
+        # observation. They must remain UNKNOWN so they cannot end it.
+        if mode == "awakening" and not hud_observable:
+            cls = "unknown"
+        gauge_level = (
+            float(lit_sectors / sectors)
+            if cls == "normal" or (mode == "awakening" and hud_observable) else None
+        )
+        # Glow is measured from brightness/chroma energy in the annulus just
+        # outside the rim, relative to its immediate exterior.  It deliberately
+        # does not use hue, because each Awakening type has a different colour.
+        glow_band = (radius >= 40) & (radius < 47)
+        background_band = (radius >= 49) & (radius < 58)
+        energy = hsv[:, :, 2].astype(np.float32) * (0.35 + 0.65 * hsv[:, :, 1] / 255.0)
+        glow_energy = float(np.mean(energy[glow_band]))
+        background_energy = float(np.mean(energy[background_band]))
+        glow_score = max(0.0, (glow_energy - background_energy) / 255.0)
+        if self.debug and mode == "awakening":
+            print(
+                "AWAKENING_END icon_observable "
+                f"value={hud_observable} source=inner_tick_ring circle_present={circle_present} "
+                f"tick_edge={tick_edge:.3f} tick_min={self.cfg['burst_normal_tick_edge_min']:.3f} "
+                f"inner_icon_edge={inner_icon_edge:.3f} inner_icon_min={self.cfg['burst_hud_inner_icon_edge_min']:.3f} "
+                f"outer_edge={outer_edge:.3f} outer_min={self.cfg['burst_normal_outer_edge_min']:.3f} "
+                f"geometry=center({cx},{cy}) radius={self._burst_geometry.radius:.1f}"
+            )
+        if not hud_observable:
+            glow_classification = "UNKNOWN"
+        elif glow_score >= self.cfg.get("awakening_glow_present_score_min", 0.12):
+            glow_classification = "PRESENT"
+        elif glow_score <= self.cfg.get("awakening_glow_absent_score_max", 0.05):
+            glow_classification = "ABSENT"
+        else:
+            # Ambiguous samples are not evidence that the glow disappeared.
+            glow_classification = "UNKNOWN"
+        if self.debug and mode == "awakening":
+            print(
+                "AWAKENING glow "
+                f"score={glow_score:.3f} glow_energy={glow_energy:.1f} "
+                f"background_energy={background_energy:.1f} hud_observable={hud_observable} "
+                f"classification={glow_classification}"
+            )
+        if mode == "ready":
+            self._debug_ready_gauge(
+                hud, roi, cls == "normal", gauge_level, lit_sectors,
+                int(np.count_nonzero(lit)), "normal" if cls == "normal" else "hud_classification_failed",
+            )
         return BurstMetrics(
             cls,
             tick_edge,
             outer_edge,
             emblem_score=emblem_score,
             normal_tick_edge=tick_edge,
+            gauge_level=gauge_level,
+            glow_score=glow_score,
+            glow_classification=glow_classification,
+            hud_observable=hud_observable,
+            cut_in_detected=cut_in_detected,
         )

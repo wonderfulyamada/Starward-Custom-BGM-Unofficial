@@ -1,5 +1,6 @@
 opencv-python
 numpy
 mss
+mutagen
 # Optional for audio:
 pygame-ce

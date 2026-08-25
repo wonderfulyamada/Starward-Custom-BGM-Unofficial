@@ -11,8 +11,9 @@ VK_F8 = 0x77
 
 
 class GlobalPauseHotkey:
-    def __init__(self, callback):
+    def __init__(self, callback, debug=False):
         self.callback = callback
+        self.debug = debug
         self.thread = None
         self.thread_id = None
 
@@ -32,10 +33,14 @@ class GlobalPauseHotkey:
         if not user32.RegisterHotKey(None, 1, MOD_CONTROL, VK_F8):
             print("Global hotkey unavailable: Ctrl+F8 could not be registered")
             return
+        if self.debug:
+            print("Ctrl+F8 registration=success")
         try:
             message = ctypes.wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
                 if message.message == WM_HOTKEY:
+                    if self.debug:
+                        print("Ctrl+F8 callback=fired")
                     self.callback()
         finally:
             user32.UnregisterHotKey(None, 1)
