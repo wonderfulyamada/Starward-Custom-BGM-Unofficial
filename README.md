@@ -577,6 +577,14 @@ GUIから、
 
 ---
 
+# 不具合報告
+
+不具合は [GitHub Issues](../../issues) から受け付けます。サポート対象は原則として最新版のみです。旧バージョンで問題がある場合は、まず最新版で再現するか確認してください。過去バージョンは GitHub Releases から利用できますが、最新版が環境上動作しない場合などを除き、旧版固有の問題には対応できないことがあります。
+
+報告時は、内容を確認したうえで `logs/StarwardBGM.log` を添付してください。このログにはゲームログ本文や個人情報を保存しませんが、確認してから共有してください。
+
+---
+
 # 技術概要 / Technical Overview
 
 本ツールはPythonで開発したWindows向けデスクトップアプリケーションです。
@@ -874,6 +882,14 @@ Check that the file is inside a direct `BGM/` group and uses:
 - `.mp3`
 - `.ogg`
 - `.wav`
+
+---
+
+## Bug Reports
+
+Please report bugs through [GitHub Issues](../../issues). Support is generally limited to the latest release; if an issue occurs on an older release, please reproduce it on the latest version first. Older releases remain available from GitHub Releases, but issues specific to an older release may not be supported unless the current release cannot run in the affected environment.
+
+When reporting, review and attach `logs/StarwardBGM.log` if possible. It contains diagnostic events only, not raw game-log lines or personal information, but please check it before sharing.
 
 ---
 

@@ -1,20 +1,29 @@
 """Optional gamepad combination evidence for awakening confirmation."""
 from __future__ import annotations
 
+import os
 import time
+
+# SDL reads this setting while it initializes its joystick/event subsystem.
+# This module is imported before the optional pygame audio backend, so set it
+# before pygame can be imported or initialized by this application.
+os.environ["SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
 
 
 class GamepadInputAssist:
-    def __init__(self, cfg, pygame_module=None, clock=time.monotonic):
+    def __init__(self, cfg, pygame_module=None, clock=time.monotonic, logger=None):
         self.cfg = cfg
         self.pygame = pygame_module
         self.clock = clock
+        self.logger = logger
         self.buttons_down = set()
         self.button_down_at = {}
         self.combo_latched = False
         self.capture_buttons = None
         self.capture_complete = False
-        self._joystick = None
+        self._joystick = None  # Compatibility alias for the first controller.
+        self._joysticks = []
+        self._controller_info = {}
         self._event_ready = False
         self._event_init_failed = False
         self._last_controller_count = None
@@ -23,6 +32,8 @@ class GamepadInputAssist:
         self.last_combo_activation = None
 
     def _debug(self, message):
+        if self.logger and (message.startswith("controller_") or message.startswith("joystick_init")):
+            self.logger.info("gamepad %s", message)
         if self.cfg.get("_debug", False):
             print(f"GAMEPAD {message}")
 
@@ -67,12 +78,19 @@ class GamepadInputAssist:
             if count < 1:
                 self._disconnect()
                 return False
-            if self._joystick is None:
-                self._joystick = self.pygame.joystick.Joystick(0)
-                self._joystick.init()
-                name = getattr(self._joystick, "get_name", lambda: "unknown")()
-                instance_id = getattr(self._joystick, "get_instance_id", lambda: "n/a")()
-                self._debug(f"controller_connected name={name!r} instance_id={instance_id}")
+            if len(self._joysticks) != count:
+                self._joysticks = []
+                for index in range(count):
+                    joystick = self.pygame.joystick.Joystick(index)
+                    joystick.init()
+                    self._joysticks.append(joystick)
+                    name = getattr(joystick, "get_name", lambda: "unknown")()
+                    instance_id = getattr(joystick, "get_instance_id", lambda: "n/a")()
+                    self._controller_info[id(joystick)] = {
+                        "index": index, "name": name, "instance_id": instance_id,
+                    }
+                    self._debug(f"controller_connected index={index} name={name!r} instance_id={instance_id}")
+                self._joystick = self._joysticks[0]
             return True
         except Exception as exc:
             self._debug(f"controller_init_failed error={exc}")
@@ -83,6 +101,8 @@ class GamepadInputAssist:
         if self._joystick is not None:
             self._debug("controller_disconnected")
         self._joystick = None
+        self._joysticks = []
+        self._controller_info = {}
         self.buttons_down.clear()
         self.button_down_at.clear()
         self.combo_latched = False
@@ -136,8 +156,17 @@ class GamepadInputAssist:
                 if getattr(event, "type", None) in event_types:
                     action = "JOYBUTTONDOWN" if event.type == getattr(self.pygame, "JOYBUTTONDOWN", None) else "JOYBUTTONUP"
                     self._debug(f"{action} button={getattr(event, 'button', 'n/a')}")
-            for button in range(self._joystick.get_numbuttons()):
-                pressed = bool(self._joystick.get_button(button))
+            # A registered button may be held on any connected controller.
+            # Keep button numbers global to preserve the existing combo format.
+            pressed_sources = {}
+            for joystick in self._joysticks:
+                source = self._controller_info.get(id(joystick), {})
+                for button in range(joystick.get_numbuttons()):
+                    if joystick.get_button(button):
+                        pressed_sources.setdefault(button, []).append(source)
+            pressed_buttons = set(pressed_sources)
+            for button in set(self.buttons_down) | pressed_buttons:
+                pressed = button in pressed_buttons
                 if pressed and button not in self.buttons_down:
                     self.buttons_down.add(button)
                     self.button_down_at[button] = now
@@ -158,6 +187,19 @@ class GamepadInputAssist:
                 timings = [self.button_down_at[button] for button in required]
                 grace = max(0.0, float(self.cfg.get("gamepad_awakening_grace_ms", 250))) / 1000.0
                 self.combo_latched = max(timings) - min(timings) <= grace
+                if self.combo_latched and self.logger:
+                    sources = {
+                        (source.get("index"), source.get("name"), source.get("instance_id"))
+                        for button in required for source in pressed_sources.get(button, [])
+                    }
+                    self.logger.info(
+                        "gamepad_awakening_combo buttons=%s controllers=%s",
+                        sorted(required),
+                        [
+                            {"index": index, "name": name, "instance_id": instance_id}
+                            for index, name, instance_id in sorted(sources, key=lambda item: item[0])
+                        ],
+                    )
             active = self.active
             if active and self._last_combo_active is not True:
                 self.last_combo_activation = now

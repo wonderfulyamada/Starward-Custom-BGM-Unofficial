@@ -49,6 +49,13 @@ class BattleStateMachine:
         if self.debug:
             print(message)
 
+    def _set_state(self, state, reason):
+        previous = self.state
+        self.state = state
+        logger = getattr(self, "diagnostic_logger", None)
+        if logger and previous != state:
+            logger.info("state_transition from=%s to=%s reason=%s", previous, state, reason)
+
     def _reset_gauge_tracking(self, reason="unspecified"):
         if any((
             self.hud_lost_streak,
@@ -123,7 +130,7 @@ class BattleStateMachine:
                     f"state={previous_state}->{self.state} ignored=already_active"
                 )
                 return
-            self.state = self.BATTLE
+            self._set_state(self.BATTLE, "log_battle_start")
             self._reset_gauge_tracking("log_battle_start")
             self.result_blackout_streak = 0
             self.result_sample_count = 0
@@ -134,7 +141,7 @@ class BattleStateMachine:
             # recognition in control of that existing transition.
             self.on_event(timestamp, "BATTLE_END")
         elif event == "LOBBY":
-            self.state = self.IDLE
+            self._set_state(self.IDLE, "log_lobby")
             self._reset_gauge_tracking("log_lobby")
             self.result_blackout_streak = 0
             self.result_sample_count = 0
@@ -165,7 +172,7 @@ class BattleStateMachine:
                     f"consecutive={self.result_blackout_streak}"
                 )
                 if self.result_blackout_streak >= self.cfg.get("result_blackout_confirm_frames", 2):
-                    self.state = self.IDLE
+                    self._set_state(self.IDLE, "result_blackout")
                     self.result_blackout_streak = 0
                     self._debug("RESULT_END transition=IDLE")
                     self.on_event(timestamp, "RESULT_END")
@@ -192,7 +199,7 @@ class BattleStateMachine:
                 self.defeat_streak = 0
 
             if self.victory_streak >= self.cfg["result_confirm_frames"]:
-                self.state = self.RESULT
+                self._set_state(self.RESULT, "victory")
                 self._reset_gauge_tracking("result_victory")
                 self.result_blackout_streak = 0
                 self.result_sample_count = 0
@@ -202,7 +209,7 @@ class BattleStateMachine:
                 return
 
             if self.defeat_streak >= self.cfg["result_confirm_frames"]:
-                self.state = self.RESULT
+                self._set_state(self.RESULT, "defeat")
                 self._reset_gauge_tracking("result_defeat")
                 self.result_blackout_streak = 0
                 self.result_sample_count = 0
@@ -213,7 +220,7 @@ class BattleStateMachine:
 
         if self.state in (self.IDLE, self.RESULT):
             if scores.go >= self.cfg["go_threshold"]:
-                self.state = self.BATTLE
+                self._set_state(self.BATTLE, "battle_start")
                 self._reset_gauge_tracking("battle_start")
                 self.result_blackout_streak = 0
                 self.result_sample_count = 0
@@ -277,7 +284,7 @@ class BattleStateMachine:
                 f"reason={','.join(reasons) if reasons else 'all_conditions_met'}"
             )
         if ready and input_enabled and normal_to_unknown:
-            self.state = self.AWAKENING
+            self._set_state(self.AWAKENING, "awakening_start")
             self.gauge_recovery_streak = 0
             self._begin_awakening_tracking(timestamp, self.last_visible_gauge)
             reason = "ready_pending_input_normal_to_unknown"
@@ -305,7 +312,7 @@ class BattleStateMachine:
                     f"required={self.cfg['burst_hud_loss_confirm_frames']}"
                 )
                 if self.hud_lost_streak >= self.cfg["burst_hud_loss_confirm_frames"]:
-                    self.state = self.READY
+                    self._set_state(self.READY, "hud_missing_confirmed")
                     self.ready_gauge = self.last_visible_gauge
                     self.gauge_decrease_streak = 0
                     self.ready_decrease_samples = []
@@ -340,7 +347,7 @@ class BattleStateMachine:
         elif self.state == self.AWAKENING:
             if self._awakening_end_condition(gauge, burst):
                 self._debug("AWAKENING_END confirmed reason=near_zero_gauge_and_glow_absent")
-                self.state = self.BATTLE
+                self._set_state(self.BATTLE, "awakening_end")
                 self._reset_gauge_tracking("awakening_end")
                 self.on_event(timestamp, "AWAKENING_END")
 

@@ -139,6 +139,7 @@
   "defeat_threshold": 0.38,
   "bgm_root": "BGM",
   "ui_language": "ja",
+  "app_version": "0.2.1",
   "bgm_playback_mode": "Fixed",
   "bgm_playback_scope": "All BGM",
   "bgm_selected_group": "",
@@ -149,10 +150,7 @@
   "game_log_monitor_enabled": false,
   "starward_logs_dir": "",
   "gamepad_input_assist_enabled": false,
-  "gamepad_awakening_buttons": [
-    5,
-    8
-  ],
+  "gamepad_awakening_buttons": [],
   "gamepad_awakening_grace_ms": 250,
   "gamepad_awakening_recent_ms": 500,
   "awakening_bgm_enabled": false,

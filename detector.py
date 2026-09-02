@@ -53,10 +53,12 @@ class TemplateBank:
     }
     OPTIONAL_FILES = {"match_confirmed_2v2": "match_confirmed_2v2.png"}
 
-    def __init__(self, directory: str | Path, min_component_area: int = 32):
+    def __init__(self, directory: str | Path, min_component_area: int = 32, logger=None):
         directory = Path(directory)
         for name, filename in self.FILES.items():
             setattr(self, name, self._load_rgba(directory / filename, min_component_area))
+            if logger:
+                logger.info("template_loaded name=%s", name)
         for name, filename in self.OPTIONAL_FILES.items():
             path = directory / filename
             setattr(self, name, self._load_rgba(path, min_component_area) if path.exists() else None)
@@ -90,10 +92,12 @@ class TemplateBank:
 
 
 class ScreenDetector:
-    def __init__(self, config, templates: TemplateBank):
+    def __init__(self, config, templates: TemplateBank, logger=None):
         self.cfg = config
         self.debug = bool(config.get("_debug", False))
         self.templates = templates
+        self.logger = logger
+        self._last_diagnostic_decision = {}
         template_dir = ROOT / "templates"
         self._awakening_emblems = []
         for filename in self.cfg["burst_emblem_templates"]:
@@ -346,8 +350,25 @@ class ScreenDetector:
                 best = DetectionResult(float(score), (offset_x + location[0], offset_y + location[1]), float(scale))
         return best
 
+    def _diagnose_detection(self, name, result, threshold, anchor=None, color=None, accept=None, reason="score"):
+        if not getattr(self, "logger", None):
+            return
+        # Scores fluctuate naturally per frame; status changes are the useful
+        # support signal and keep this file compact during long matches.
+        key = (anchor, color, accept, reason)
+        if not hasattr(self, "_last_diagnostic_decision"):
+            self._last_diagnostic_decision = {}
+        if self._last_diagnostic_decision.get(name) == key:
+            return
+        self._last_diagnostic_decision[name] = key
+        self.logger.info(
+            "recognition name=%s score=%.3f threshold=%.3f anchor=%s color=%s accept=%s reason=%s",
+            name, result.score, threshold, anchor, color, accept, reason,
+        )
+
     def _with_color_check(self, frame, result, template, color_name, score_threshold):
         if result.position is None or result.scale is None:
+            self._diagnose_detection(color_name, result, score_threshold, False, False, False, "no_candidate")
             return DetectionResult(result.score, result.position, result.scale, 0.0, False, False)
 
         width = int(round(template.image.shape[1] * result.scale))
@@ -355,6 +376,7 @@ class ScreenDetector:
         x, y = result.position
         candidate_roi = frame[y:y + height, x:x + width]
         if candidate_roi.shape[:2] != (height, width):
+            self._diagnose_detection(color_name, result, score_threshold, False, False, False, "outside_frame")
             return DetectionResult(result.score, result.position, result.scale, 0.0, False, False)
 
         alpha = cv2.resize(template.mask, (width, height), interpolation=cv2.INTER_AREA)
@@ -395,16 +417,16 @@ class ScreenDetector:
             and position_match
             and color_match
         )
+        reasons = []
+        if result.score < self.cfg["result_template_score_min"]:
+            reasons.append("template_score")
+        if not scale_match:
+            reasons.append("scale")
+        if not position_match:
+            reasons.append("anchor")
+        if not color_match:
+            reasons.append("color")
         if getattr(self, "debug", False) and result.position is not None and result.score >= score_threshold:
-            reasons = []
-            if result.score < self.cfg["result_template_score_min"]:
-                reasons.append("template_score")
-            if not scale_match:
-                reasons.append("scale")
-            if not position_match:
-                reasons.append("anchor")
-            if not color_match:
-                reasons.append("color")
             print(
                 "RESULT candidate "
                 f"type={color_name} score={result.score:.3f} "
@@ -412,6 +434,7 @@ class ScreenDetector:
                 f"anchor={position_match} color={color_match} "
                 f"accept={candidate} reason={','.join(reasons) if reasons else 'accepted'}"
             )
+        self._diagnose_detection(color_name, result, score_threshold, position_match, color_match, candidate, ",".join(reasons) if reasons else "accepted")
         return DetectionResult(
             result.score,
             result.position,
@@ -422,7 +445,10 @@ class ScreenDetector:
         )
 
     def detect_battle_start(self, frame):
-        return self._detect(frame, self.templates.battle_start, "battle_start_roi")
+        result = self._detect(frame, self.templates.battle_start, "battle_start_roi")
+        accepted = result.score >= self.cfg["go_threshold"]
+        self._diagnose_detection("battle_start", result, self.cfg["go_threshold"], None, None, accepted, "accepted" if accepted else "score")
+        return result
 
     def detect_victory(self, frame):
         result = self._detect(frame, self.templates.victory, "result_ui_roi", "result_template_scales")

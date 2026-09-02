@@ -11,6 +11,7 @@ import cv2
 
 from audio import NullAudio, PygameAudio
 from detector import ScreenDetector, TemplateBank
+from diagnostics import create_diagnostics_logger
 from gamepad_input import GamepadInputAssist
 from game_log_monitor import GameLogMonitor, starward_logs_dir
 from paths import ROOT
@@ -190,6 +191,9 @@ def process_frame(frame, timestamp, cfg, detector, state, show_debug):
     input_recent = input_assist.recent if input_assist is not None else False
     consume_input = input_assist.consume_recent if input_assist is not None else None
     state.update(timestamp, scores, burst, input_active, input_recent, consume_input)
+    recognition_callback = cfg.get("_recognition_callback")
+    if recognition_callback is not None:
+        recognition_callback(go, victory, defeat)
     if state.state == state.BATTLE and previous_state in (state.IDLE, state.RESULT):
         detector.reset_burst_calibration()
 
@@ -250,10 +254,15 @@ def main():
     if not (args.video or args.live):
         parser.error("one of --video, --live, or --gui is required")
 
+    logger = create_diagnostics_logger()
     cfg = load_config()
     cfg["_debug"] = args.debug
-    templates = TemplateBank(ROOT / "templates")
-    detector = ScreenDetector(cfg, templates)
+    try:
+        templates = TemplateBank(ROOT / "templates", logger=logger)
+        detector = ScreenDetector(cfg, templates, logger=logger)
+    except Exception:
+        logger.exception("template_initialization_failed")
+        raise
 
     audio = PygameAudio(cfg) if args.audio else NullAudio()
     source_name = Path(args.video).name if args.video else "LIVE"
@@ -261,15 +270,22 @@ def main():
 
     def on_event(timestamp, event):
         print(f"{source_name}  {timestamp:9.3f}  {event}  state={state.state}")
+        logger.info("state_transition event=%s state=%s", event, state.state)
+        logger.info("bgm_operation event=%s", event)
         audio.on_event(event)
 
     state = BattleStateMachine(cfg, on_event)
-    state.input_assist = GamepadInputAssist(cfg)
+    state.diagnostic_logger = logger
+    state.input_assist = GamepadInputAssist(cfg, logger=logger)
 
-    if args.video:
-        run_video(args.video, cfg, detector, state, args.debug)
-    else:
-        run_live(cfg, detector, state, args.debug)
+    try:
+        if args.video:
+            run_video(args.video, cfg, detector, state, args.debug)
+        else:
+            run_live(cfg, detector, state, args.debug)
+    except Exception:
+        logger.exception("runtime_exception")
+        raise
 
 
 if __name__ == "__main__":

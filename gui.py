@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import main
+from diagnostics import APP_VERSION, create_diagnostics_logger
 from audio import PygameAudio
 from detector import ScreenDetector, TemplateBank
 from gamepad_input import GamepadInputAssist
@@ -37,7 +38,7 @@ class App:
     def __init__(self, root, debug=False):
         self.root = root
         self.debug = debug
-        self.root.title("Starward BGM Detector")
+        self.root.title(f"Starward BGM Detector v{APP_VERSION}")
         self.window_choice = tk.StringVar()
         cfg = main.load_config()
         cfg["_debug"] = debug
@@ -59,6 +60,10 @@ class App:
         self.gamepad_binding_text = tk.StringVar()
         self.gamepad_preview_text = tk.StringVar()
         self.gamepad_remove_choice = tk.StringVar()
+        self.go_threshold = tk.DoubleVar(value=cfg.get("go_threshold", 0.42))
+        self.victory_threshold = tk.DoubleVar(value=cfg.get("victory_threshold", 0.38))
+        self.defeat_threshold = tk.DoubleVar(value=cfg.get("defeat_threshold", 0.38))
+        self.recognition_score_text = tk.StringVar(value="GO 0.000 / V 0.000 / D 0.000")
         self.awakening_bgm_enabled = tk.BooleanVar(value=cfg.get("awakening_bgm_enabled", False))
         self.awakening_bgm_group = tk.StringVar(value=cfg.get("awakening_bgm_group", ""))
         self.awakening_bgm_track = tk.StringVar(value=cfg.get("awakening_bgm_track", ""))
@@ -97,7 +102,7 @@ class App:
         self.localized_widgets = []
         self.windows = {}
         self.library = MusicLibrary(main.ROOT / "BGM")
-        self.gamepad_assist = GamepadInputAssist(cfg)
+        self.gamepad_assist = GamepadInputAssist(cfg, logger=create_diagnostics_logger())
         self.stop_event = None
         self.worker = None
         self.audio = None
@@ -181,6 +186,9 @@ class App:
             "starward_logs_dir": self.game_log_folder.get().strip(),
             "gamepad_input_assist_enabled": self.gamepad_input_assist_enabled.get(),
             "gamepad_awakening_buttons": list(self.gamepad_assist.buttons),
+            "go_threshold": self.go_threshold.get(),
+            "victory_threshold": self.victory_threshold.get(),
+            "defeat_threshold": self.defeat_threshold.get(),
             "awakening_bgm_enabled": self.awakening_bgm_enabled.get(),
             "awakening_bgm_group": self.awakening_bgm_group.get(),
             "awakening_bgm_track": self.awakening_bgm_track.get(),
@@ -218,6 +226,12 @@ class App:
         if self.runtime_cfg is not None:
             self.runtime_cfg.update(settings)
 
+    def restore_detection_defaults(self):
+        self.go_threshold.set(0.42)
+        self.victory_threshold.set(0.38)
+        self.defeat_threshold.set(0.38)
+        self.save_playback_settings()
+
     def browse_game_log_folder(self):
         folder = filedialog.askdirectory(parent=self.root, title=self.t("game_log_folder"))
         if folder:
@@ -252,6 +266,10 @@ class App:
                     self.toggle_pause()
                 elif update == "__worker_finished__":
                     self.root.after(10, self._handle_worker_finished)
+                elif isinstance(update, tuple) and update[0] == "__recognition__":
+                    self.recognition_score_text.set(
+                        f"GO {update[1]:.3f} / V {update[2]:.3f} / D {update[3]:.3f}"
+                    )
                 else:
                     self.set_detection_state(update)
             except queue.Empty:
@@ -321,6 +339,14 @@ class App:
         self.game_log_folder_entry.bind("<FocusOut>", self.save_playback_settings)
         self._localized(ttk.Button(frame, command=self.browse_game_log_folder), "browse").grid(row=11, column=2)
         self._localized(ttk.Checkbutton(frame, variable=self.gamepad_input_assist_enabled, command=self.save_playback_settings), "gamepad_input_assist_enabled").grid(row=12, column=0, columnspan=2, sticky="w")
+        self._localized(ttk.Label(frame), "detection_thresholds").grid(row=12, column=2, sticky="w")
+        for row, key, value in ((13, "battle_start_threshold", self.go_threshold), (14, "victory_threshold", self.victory_threshold), (15, "defeat_threshold", self.defeat_threshold)):
+            self._localized(ttk.Label(frame), key).grid(row=row, column=3, sticky="w")
+            ttk.Scale(frame, variable=value, from_=0.0, to=1.0, command=self.save_playback_settings).grid(row=row, column=4, sticky="ew")
+            ttk.Label(frame, textvariable=value).grid(row=row, column=5, sticky="w")
+        self._localized(ttk.Button(frame, command=self.restore_detection_defaults), "restore_detection_defaults").grid(row=16, column=3, columnspan=2, sticky="w")
+        self._localized(ttk.Label(frame), "current_match_rate").grid(row=17, column=3, sticky="w")
+        ttk.Label(frame, textvariable=self.recognition_score_text).grid(row=17, column=4, columnspan=2, sticky="w")
         self._localized(ttk.Label(frame), "gamepad_binding").grid(row=13, column=0, sticky="w")
         ttk.Label(frame, textvariable=self.gamepad_binding_text).grid(row=13, column=1, sticky="w")
         gamepad_actions = ttk.Frame(frame)
@@ -714,6 +740,9 @@ class App:
             self.library.set_awakening_offset(track, self._awakening_offset())
         cfg.update(self.runtime_bgm_settings())
         self.runtime_cfg = cfg
+        cfg["_recognition_callback"] = lambda go, victory, defeat: self.state_updates.put(
+            ("__recognition__", go, victory, defeat)
+        )
         if self.game_log_monitor_enabled.get() or self.lobby_bgm_enabled.get() or self.match_bgm_enabled.get():
             logs_dir = main.starward_logs_dir(cfg)
             if (not self.game_log_monitor_enabled.get()) or logs_dir is None or not logs_dir.is_dir():
@@ -727,8 +756,9 @@ class App:
         hwnd = self.windows.get(self.window_choice.get())
         if not hwnd: return messagebox.showerror(self.t("window_error"), self.t("choose_window"))
         try:
-            templates = TemplateBank(main.ROOT / "templates")
-            detector = ScreenDetector(cfg, templates)
+            logger = create_diagnostics_logger()
+            templates = TemplateBank(main.ROOT / "templates", logger=logger)
+            detector = ScreenDetector(cfg, templates, logger=logger)
         except (FileNotFoundError, ValueError) as exc:
             print(f"Template warning: {exc}")
             return messagebox.showwarning(self.t("template_warning"), self.t("template_missing"))
@@ -738,11 +768,14 @@ class App:
         audio = None
         state = None
         def on_event(timestamp, event):
+            logger.info("state_transition event=%s state=%s", event, state.state)
+            logger.info("bgm_operation event=%s", event)
             if audio is not None:
                 audio.on_event(event)
             self.state_updates.put(state.state)
         state = BattleStateMachine(cfg, on_event)
-        state.input_assist = GamepadInputAssist(cfg)
+        state.diagnostic_logger = logger
+        state.input_assist = GamepadInputAssist(cfg, logger=logger)
         self.set_detection_state(state.state)
         self.set_runtime_status("RUNNING")
         def run_source():
@@ -754,6 +787,9 @@ class App:
                 main.run_window(
                     hwnd, cfg, detector, state, False, self.stop_event,
                 )
+            except Exception:
+                logger.exception("runtime_exception")
+                raise
             finally:
                 if self.debug:
                     print(f"Ctrl+F8 worker_exit pause_requested={self.pause_requested}")

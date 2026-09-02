@@ -1,3 +1,4 @@
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -41,6 +42,14 @@ class FakePygame:
         self.display_init_calls += 1
 
 
+class MultiPygame(FakePygame):
+    def __init__(self, joysticks):
+        super().__init__(joysticks[0])
+        self._joysticks = joysticks
+        self.joystick.get_count = lambda: len(joysticks)
+        self.joystick.Joystick = lambda index: joysticks[index]
+
+
 class GamepadInputAssistTests(unittest.TestCase):
     def make_state(self, enabled):
         events = []
@@ -73,6 +82,9 @@ class GamepadInputAssistTests(unittest.TestCase):
         assist = self.make_assist([0])
         self.assertTrue(self.press(assist, 0))
 
+    def test_background_joystick_events_are_enabled_before_pygame_use(self):
+        self.assertEqual(os.environ.get("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"), "1")
+
     def test_two_and_three_button_combinations(self):
         assist = self.make_assist([0, 1])
         self.assertFalse(self.press(assist, 0))
@@ -81,6 +93,37 @@ class GamepadInputAssistTests(unittest.TestCase):
         self.press(assist, 0)
         self.press(assist, 1, 0.02)
         self.assertTrue(self.press(assist, 2, 0.02))
+
+    def test_registered_button_is_found_on_any_connected_controller(self):
+        first, second = FakeJoystick(), FakeJoystick()
+        assist = GamepadInputAssist(
+            {"gamepad_input_assist_enabled": True, "gamepad_awakening_buttons": [1], "gamepad_awakening_grace_ms": 250},
+            MultiPygame([first, second]), lambda: 0.0,
+        )
+        second.state[1] = True
+        self.assertTrue(assist.poll())
+        self.assertEqual(len(assist._joysticks), 2)
+
+    def test_combo_log_names_the_controller_without_per_poll_entries(self):
+        class Logger:
+            def __init__(self): self.entries = []
+            def info(self, message, *args): self.entries.append(message % args)
+
+        joystick = FakeJoystick()
+        joystick.get_name = lambda: "Controller A"
+        joystick.get_instance_id = lambda: 42
+        logger = Logger()
+        assist = GamepadInputAssist(
+            {"gamepad_input_assist_enabled": True, "gamepad_awakening_buttons": [1], "gamepad_awakening_grace_ms": 250},
+            FakePygame(joystick), lambda: 0.0, logger,
+        )
+        joystick.state[1] = True
+        self.assertTrue(assist.poll())
+        assist.poll()
+        combos = [entry for entry in logger.entries if entry.startswith("gamepad_awakening_combo")]
+        self.assertEqual(len(combos), 1)
+        self.assertIn("Controller A", combos[0])
+        self.assertIn("42", combos[0])
 
     def test_staggered_incomplete_and_release_states(self):
         assist = self.make_assist([0, 1])

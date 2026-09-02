@@ -4,6 +4,7 @@ dist/
 *.spec
 *.toc
 *.manifest
+*.zip
 
 # Python environments and generated files
 __pycache__/

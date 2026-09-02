@@ -3,10 +3,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ReleaseVersion = "0.2.1"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildDir = Join-Path $projectRoot "build"
 $distDir = Join-Path $projectRoot "dist"
 $appDir = Join-Path $distDir "StarwardBGM"
+Write-Host "Preparing StarwardBGM v$ReleaseVersion"
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Tk-capable Python interpreter not found: $Python"
