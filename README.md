@@ -25,7 +25,7 @@
 
 最新版は GitHub Releases からダウンロードできます。
 
-**Latest Release: v0.2.0**
+**Latest Release: v0.2.1**
 
 https://github.com/wonderfulyamada/Starward-Custom-BGM-Unofficial/releases/latest
 
