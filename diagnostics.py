@@ -7,7 +7,7 @@ import sys
 
 from paths import ROOT
 
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 
 
 def create_diagnostics_logger():

@@ -39,6 +39,7 @@ class App:
         self.root = root
         self.debug = debug
         self.root.title(f"Starward BGM Detector v{APP_VERSION}")
+        self.root.geometry(f"{min(1200, self.root.winfo_screenwidth() - 32)}x{min(800, self.root.winfo_screenheight() - 96)}")
         self.window_choice = tk.StringVar()
         cfg = main.load_config()
         cfg["_debug"] = debug
@@ -292,8 +293,26 @@ class App:
             self.set_runtime_status("STOPPED")
 
     def _build(self):
-        frame = ttk.Frame(self.root, padding=12)
-        frame.grid(sticky="nsew")
+        settings_container = ttk.Frame(self.root)
+        settings_container.grid(row=0, column=0, sticky="nsew")
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        settings_container.rowconfigure(0, weight=1)
+        settings_container.columnconfigure(0, weight=1)
+        self.settings_canvas = tk.Canvas(settings_container, borderwidth=0, highlightthickness=0)
+        self.settings_scrollbar = ttk.Scrollbar(
+            settings_container, orient="vertical", command=self.settings_canvas.yview,
+        )
+        self.settings_canvas.configure(yscrollcommand=self.settings_scrollbar.set)
+        self.settings_canvas.grid(row=0, column=0, sticky="nsew")
+        self.settings_scrollbar.grid(row=0, column=1, sticky="ns")
+        frame = ttk.Frame(self.settings_canvas, padding=12)
+        self.settings_content_window = self.settings_canvas.create_window((0, 0), window=frame, anchor="nw")
+        frame.bind("<Configure>", self._update_settings_scrollregion)
+        self.settings_canvas.bind("<Configure>", self._fit_settings_content_width)
+        self.root.bind_all("<MouseWheel>", self._scroll_settings, add="+")
+        self.root.bind_all("<Button-4>", self._scroll_settings, add="+")
+        self.root.bind_all("<Button-5>", self._scroll_settings, add="+")
         self._localized(ttk.Label(frame), "window").grid(row=0, column=0, sticky="w")
         self.window_box = ttk.Combobox(frame, textvariable=self.window_choice, width=52, state="readonly")
         self.window_box.grid(row=0, column=1, sticky="ew")
@@ -435,6 +454,31 @@ class App:
             self._localized(ttk.Label(frame), f"{kind}_bgm_track").grid(row=row + 2, column=0, sticky="w")
         frame.columnconfigure(1, weight=1)
 
+    def _update_settings_scrollregion(self, _event=None):
+        self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all"))
+
+    def _fit_settings_content_width(self, event):
+        self.settings_canvas.itemconfigure(self.settings_content_window, width=event.width)
+        self._update_settings_scrollregion()
+
+    def _scroll_settings(self, event):
+        widget = event.widget
+        while widget is not None:
+            if widget is self.settings_canvas:
+                if getattr(event, "num", None) == 4:
+                    units = -1
+                elif getattr(event, "num", None) == 5:
+                    units = 1
+                else:
+                    delta = getattr(event, "delta", 0)
+                    if not delta:
+                        return None
+                    units = -max(1, abs(delta) // 120) if delta > 0 else max(1, abs(delta) // 120)
+                self.settings_canvas.yview_scroll(units, "units")
+                return "break"
+            widget = getattr(widget, "master", None)
+        return None
+
     def refresh_windows(self):
         items = visible_windows()
         self.windows = {f"{title} [{hwnd}]": hwnd for hwnd, title in items}
@@ -545,17 +589,6 @@ class App:
         self.gamepad_registration_active = True
         self.gamepad_assist.begin_capture()
         self.gamepad_binding_text.set(self.t("gamepad_registering"))
-        self.root.after(25, self.poll_gamepad_registration)
-        self.root.after(1000, self.finish_gamepad_registration)
-
-    def poll_gamepad_registration(self):
-        if not self.gamepad_registration_active:
-            return
-        self.gamepad_assist.poll()
-        if self.gamepad_assist.capture_complete:
-            self.finish_gamepad_registration()
-            return
-        self.root.after(25, self.poll_gamepad_registration)
 
     def finish_gamepad_registration(self):
         if not self.gamepad_registration_active:
@@ -570,13 +603,15 @@ class App:
             self.save_playback_settings()
         else:
             if self.debug:
-                print("GAMEPAD GUI registration_timeout reason=no_buttons_captured")
+                print("GAMEPAD GUI registration_cancel reason=no_buttons_captured")
             self.update_gamepad_binding_text()
 
     def clear_gamepad_buttons(self):
         if self.debug:
             print("GAMEPAD GUI registration_cancel reason=clear_binding")
         self.gamepad_assist.cfg["gamepad_awakening_buttons"] = []
+        if self.gamepad_registration_active:
+            self.gamepad_assist.finish_capture()
         self.gamepad_registration_active = False
         self.update_gamepad_binding_text()
         self.save_playback_settings()
@@ -594,6 +629,8 @@ class App:
 
     def refresh_gamepad_preview(self):
         self.gamepad_assist.poll()
+        if self.gamepad_registration_active and self.gamepad_assist.is_capture_complete():
+            self.finish_gamepad_registration()
         buttons = self.gamepad_assist.buttons
         states = " ".join(
             f"Button {button}={'ON' if button in self.gamepad_assist.buttons_down else 'OFF'}"

@@ -1,16 +1,22 @@
 import os
+import threading
+import time
 import unittest
+import weakref
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from gamepad_input import GamepadInputAssist
+from gamepad_input import GamepadInputAssist, _GamepadMonitor
 from gui import App
 from state_machine import BattleStateMachine, DetectorScores
 
 
 class FakeJoystick:
-    def __init__(self, buttons=4):
+    def __init__(self, buttons=4, name="Fake Controller", instance_id=1, guid="fake-guid"):
         self.state = [False] * buttons
+        self.name = name
+        self.instance_id = instance_id
+        self.guid = guid
 
     def init(self):
         pass
@@ -21,18 +27,43 @@ class FakeJoystick:
     def get_button(self, button):
         return self.state[button]
 
+    def get_name(self):
+        return self.name
+
+    def get_instance_id(self):
+        return self.instance_id
+
+    def get_guid(self):
+        return self.guid
+
 
 class FakePygame:
     def __init__(self, joystick):
         self._joystick = joystick
+        self.JOYBUTTONDOWN = 1
+        self.JOYBUTTONUP = 2
+        self.JOYDEVICEADDED = 3
+        self.JOYDEVICEREMOVED = 4
+        self.events = []
         self.joystick = SimpleNamespace(
             get_init=lambda: True, init=lambda: None, get_count=lambda: 1,
             Joystick=lambda _index: joystick,
         )
-        self.event = SimpleNamespace(pump=lambda: None)
+        self.event = SimpleNamespace(pump=lambda: None, get=self._get_events)
         self.display = SimpleNamespace(get_init=self._display_get_init, init=self._display_init)
         self.display_initialized = False
         self.display_init_calls = 0
+
+    def queue_event(self, event_type, button=None):
+        self.events.append(SimpleNamespace(type=event_type, button=button))
+
+    def _get_events(self, event_types=None):
+        if event_types is None:
+            events, self.events = self.events, []
+            return events
+        selected = [event for event in self.events if event.type in event_types]
+        self.events = [event for event in self.events if event.type not in event_types]
+        return selected
 
     def _display_get_init(self):
         return self.display_initialized
@@ -46,11 +77,19 @@ class MultiPygame(FakePygame):
     def __init__(self, joysticks):
         super().__init__(joysticks[0])
         self._joysticks = joysticks
-        self.joystick.get_count = lambda: len(joysticks)
-        self.joystick.Joystick = lambda index: joysticks[index]
+        self.joystick.get_count = lambda: len(self._joysticks)
+        self.joystick.Joystick = lambda index: self._joysticks[index]
 
 
 class GamepadInputAssistTests(unittest.TestCase):
+    def wait_until(self, predicate, timeout=0.5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.005)
+        return predicate()
+
     def make_state(self, enabled):
         events = []
         cfg = {
@@ -103,6 +142,95 @@ class GamepadInputAssistTests(unittest.TestCase):
         second.state[1] = True
         self.assertTrue(assist.poll())
         self.assertEqual(len(assist._joysticks), 2)
+
+    def test_shared_monitor_snapshot_keeps_gui_and_worker_off_pygame(self):
+        class Monitor:
+            def __init__(self):
+                self.lock = threading.RLock()
+                self.captures = weakref.WeakSet()
+            def read(self):
+                return frozenset({0, 1}), {0: [{"index": 0, "name": "A", "instance_id": 1}],
+                                         1: [{"index": 1, "name": "B", "instance_id": 2}]}
+
+        monitor = Monitor()
+        gui_assist = GamepadInputAssist({"gamepad_input_assist_enabled": True, "gamepad_awakening_buttons": [0, 1]})
+        worker_assist = GamepadInputAssist({"gamepad_input_assist_enabled": True, "gamepad_awakening_buttons": [0, 1]})
+        gui_assist._monitor = worker_assist._monitor = monitor
+        self.assertIsNone(gui_assist.pygame)
+        self.assertIsNone(worker_assist.pygame)
+        self.assertTrue(gui_assist.poll())
+        self.assertTrue(worker_assist.poll())
+
+    def test_shared_monitor_forwards_short_button_down_to_capture(self):
+        class Monitor:
+            def __init__(self):
+                self.lock = threading.RLock()
+                self.captures = weakref.WeakSet()
+            def read(self): return frozenset(), {}
+
+        assist = GamepadInputAssist({})
+        assist._monitor = Monitor()
+        assist.begin_capture()
+        assist._capture_event(SimpleNamespace(type=1, button=3), 1, 2)
+        self.assertTrue(assist.is_capture_complete())
+        self.assertEqual(assist.finish_capture(), [3])
+
+    def test_monitor_recovers_from_temporary_pygame_error(self):
+        class Logger:
+            def __init__(self): self.entries = []
+            def info(self, message, *args): self.entries.append(message % args)
+
+        joystick = FakeJoystick(instance_id=10)
+        pygame = FakePygame(joystick)
+        attempts = [0]
+
+        def count():
+            attempts[0] += 1
+            if attempts[0] == 1:
+                raise RuntimeError("temporary SDL failure")
+            return 1
+
+        pygame.joystick.get_count = count
+        logger = Logger()
+        monitor = _GamepadMonitor(logger, pygame, poll_interval=0.001, retry_delay=0.001)
+        joystick.state[1] = True
+        self.assertTrue(self.wait_until(lambda: 1 in monitor.read()[0]))
+        self.assertTrue(monitor.thread.is_alive())
+        self.assertTrue(any("monitor_recovering" in entry for entry in logger.entries))
+
+    def test_monitor_reenumerates_same_count_device_replacement(self):
+        first = FakeJoystick(name="Controller A", instance_id=10, guid="guid-a")
+        second = FakeJoystick(name="Controller B", instance_id=20, guid="guid-b")
+        pygame = MultiPygame([first])
+        monitor = _GamepadMonitor(pygame_module=pygame, poll_interval=0.001, retry_delay=0.001)
+        first.state[0] = True
+        self.assertTrue(self.wait_until(
+            lambda: monitor.read()[1].get(0, [{}])[0].get("instance_id") == 10
+        ))
+        first.state[0] = False
+        second.state[2] = True
+        pygame._joysticks = [second]  # Count remains one, but identity changes.
+        self.assertTrue(self.wait_until(
+            lambda: monitor.read()[1].get(2, [{}])[0].get("instance_id") == 20
+        ))
+
+    def test_monitor_drains_queue_and_forwards_only_button_events(self):
+        class Capture:
+            def __init__(self): self.events = []
+            def _capture_event(self, event, *_types): self.events.append(event)
+
+        pygame = FakePygame(FakeJoystick())
+        monitor = _GamepadMonitor(pygame_module=pygame, poll_interval=0.001, retry_delay=0.001)
+        capture = Capture()
+        with monitor.lock:
+            monitor.captures.add(capture)
+        pygame.queue_event(999)
+        pygame.queue_event(pygame.JOYDEVICEADDED)
+        pygame.queue_event(pygame.JOYBUTTONDOWN, 1)
+        pygame.queue_event(pygame.JOYBUTTONUP, 1)
+        self.assertTrue(self.wait_until(lambda: len(capture.events) == 2))
+        self.assertEqual([event.type for event in capture.events], [pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP])
+        self.assertEqual(pygame.events, [])
 
     def test_combo_log_names_the_controller_without_per_poll_entries(self):
         class Logger:
@@ -161,7 +289,9 @@ class GamepadInputAssistTests(unittest.TestCase):
         assist.cfg["_debug"] = True
         with patch("builtins.print") as printed:
             assist.begin_capture()
-            self.press(assist, 0)
+            self.joystick.state[0] = True
+            assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 0)
+            assist.poll()
             self.assertEqual(assist.finish_capture(), [0])
         messages = [call.args[0] for call in printed.call_args_list]
         self.assertTrue(any("registration_start" in message for message in messages))
@@ -187,25 +317,22 @@ class GamepadInputAssistTests(unittest.TestCase):
         self.assertTrue(any("controller_count=0" in message for message in messages))
         self.assertTrue(any("controller_disconnected" in message for message in messages))
 
-    def test_gui_registration_polls_without_blocking_and_handles_timeout(self):
-        scheduled = []
-
+    def test_gui_registration_waits_for_event_and_clear_cancels_capture(self):
         class Root:
             def after(self, delay, callback):
-                scheduled.append((delay, callback))
+                pass
 
         class Assist:
             def __init__(self, captured):
                 self.captured = captured
-                self.poll_calls = 0
                 self.capture_complete = False
+                self.cancelled = False
                 self.cfg = {"gamepad_awakening_buttons": []}
 
             def begin_capture(self): pass
-            def poll(self):
-                self.poll_calls += 1
-                self.capture_complete = bool(self.captured)
-            def finish_capture(self): return self.captured
+            def finish_capture(self):
+                self.cancelled = True
+                return self.captured
             @property
             def buttons(self): return tuple(self.cfg["gamepad_awakening_buttons"])
 
@@ -219,25 +346,68 @@ class GamepadInputAssistTests(unittest.TestCase):
         app.update_gamepad_binding_text = lambda: None
         app.save_playback_settings = lambda: None
         app.register_gamepad_buttons()
-        self.assertEqual([delay for delay, _ in scheduled], [25, 1000])
-        scheduled[0][1]()
-        self.assertEqual(app.gamepad_assist.poll_calls, 1)
-        self.assertEqual(app.gamepad_assist.cfg["gamepad_awakening_buttons"], [0])
-        self.assertFalse(app.gamepad_registration_active)
-
-        app.gamepad_assist = Assist([])
-        app.gamepad_registration_active = True
-        app.finish_gamepad_registration()
+        self.assertTrue(app.gamepad_registration_active)
+        app.clear_gamepad_buttons()
+        self.assertTrue(app.gamepad_assist.cancelled)
         self.assertFalse(app.gamepad_registration_active)
 
     def test_first_press_completes_capture_and_duplicate_add_is_ignored(self):
         assist = self.make_assist([])
         assist.begin_capture()
-        self.press(assist, 1)
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 1)
+        assist.poll()
         self.assertTrue(assist.capture_complete)
         self.assertEqual(assist.finish_capture(), [1])
         assist.cfg["gamepad_awakening_buttons"] = [1]
         self.assertEqual(sorted(set(assist.buttons + (1,))), [1])
+
+    def test_only_the_first_button_down_is_captured_even_after_a_long_wait(self):
+        assist = self.make_assist([])
+        assist.begin_capture()
+        self.clock[0] += 60
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 1)
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 2)
+        assist.poll()
+        self.assertEqual(assist.finish_capture(), [1])
+
+    def test_short_button_event_is_captured_without_a_held_state(self):
+        assist = self.make_assist([])
+        assist.begin_capture()
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 1)
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONUP, 1)
+        assist.poll()
+        self.assertTrue(assist.capture_complete)
+        self.assertEqual(assist.finish_capture(), [1])
+
+    def test_button_held_before_capture_requires_release_and_repress(self):
+        assist = self.make_assist([])
+        self.joystick.state[1] = True
+        assist.poll()
+        assist.begin_capture()
+        assist.poll()
+        self.assertFalse(assist.capture_complete)
+        self.joystick.state[1] = False
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONUP, 1)
+        assist.poll()
+        assist.pygame.queue_event(assist.pygame.JOYBUTTONDOWN, 1)
+        assist.poll()
+        self.assertTrue(assist.capture_complete)
+        self.assertEqual(assist.finish_capture(), [1])
+
+    def test_event_read_by_another_assist_reaches_active_capture(self):
+        pygame = FakePygame(FakeJoystick())
+        consumer = GamepadInputAssist({}, pygame)
+        capture = GamepadInputAssist({}, pygame)
+        capture.begin_capture()
+        pygame.queue_event(pygame.JOYBUTTONDOWN, 2)
+        consumer.poll()
+        self.assertTrue(capture.capture_complete)
+        self.assertEqual(capture.finish_capture(), [2])
+
+    def test_empty_capture_still_finishes_empty(self):
+        assist = self.make_assist([])
+        assist.begin_capture()
+        self.assertEqual(assist.finish_capture(), [])
 
     def test_gui_can_remove_one_registered_button(self):
         app = App.__new__(App)
