@@ -1,4 +1,30 @@
-# Starward Custom BGM（非公式 / Unofficial）
+# Starward Custom BGM (Unofficial)
+
+A Windows desktop tool that detects in-game state and automatically switches user-provided BGM for Starward / 星の翼.
+
+## English Quick Overview
+
+The tool combines multiple runtime signals instead of relying on a single trigger:
+
+- selected-window capture and screen recognition
+- real-time game-log tail monitoring
+- gamepad input monitoring
+- state-machine-based event handling
+- context-aware audio playback and handoff
+- JSON-backed configuration and music library metadata
+- Japanese / English localization
+- portable Windows distribution
+- automated regression testing
+
+Current regression suite: **124 tests**.
+
+The application does **not** modify game files. Public distribution was confirmed with official support for the described non-commercial approach using screen capture / recognition and real-time log monitoring.
+
+Latest release: **v0.2.2**
+
+---
+
+## 日本語
 
 『星の翼 / Starward』向けのWindows用カスタムBGMツールです。
 
