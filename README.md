@@ -2,6 +2,8 @@
 
 A Windows desktop tool that detects in-game state and automatically switches user-provided BGM for Starward / 星の翼.
 
+> **Current status:** v0.2.2 is available from GitHub Releases. The implemented features have automated regression coverage, but recognition and controller input can vary with the game's UI, resolution, logs, and local hardware. This is an unofficial, independent, non-commercial fan-made project.
+
 ## English Quick Overview
 
 The tool combines multiple runtime signals instead of relying on a single trigger:
@@ -27,6 +29,8 @@ Latest release: **v0.2.2**
 ## 日本語
 
 『星の翼 / Starward』向けのWindows用カスタムBGMツールです。
+
+> **現在の状況:** GitHub Releases では v0.2.2 を配布しています。実装済み機能には自動回帰テストがありますが、ゲーム画面・解像度・ログ・周辺機器の構成により認識や入力検出が変わることがあります。公式製品、公式認証、公式提携ではありません。
 
 ゲーム画面の認識と、任意のゲームログ監視を利用してゲーム状態を判定し、
 
@@ -634,7 +638,7 @@ GUIから、
 現在の自動回帰テスト：
 
 ```text
-108 tests
+124 個のテスト関数
 ```
 
 ---
@@ -663,6 +667,10 @@ py main.py --gui --debug
 ```
 
 ビルドにはPython・PyInstallerなどの開発環境が必要です。
+
+## 開発について
+
+個人プロジェクトです。作者は課題の整理、機能要件の決定、実装案の確認、動作確認、問題の調査と修正方針の判断を担当しています。実装と検証には AI コーディングツールを利用しています。
 
 ---
 
@@ -936,7 +944,7 @@ When reporting, review and attach `logs/StarwardBGM.log` if possible. It contain
 Current automated regression suite:
 
 ```text
-108 tests
+124 test functions
 ```
 
 ---
